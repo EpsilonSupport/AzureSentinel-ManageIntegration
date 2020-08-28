@@ -24,4 +24,4 @@ Deploy the solution
 5.	Next, go to Configuration - Analytics and configure required alerts to use playbook. Edit Alert - Automated Response - Select Playbook.<br>
 6.  Enable playbook once everything is set up correctly.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FEpsilonSupport%2FAzure-Sentinel%2Fmaster%2FPlaybooks%2FManage-Integration%2FAzureDeploy-ManageIntegration.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FEpsilonSupport%2FAzureSentinel-ManageIntegration%2FAzureDeploy-ManageIntegration.json)
