@@ -1,0 +1,537 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "PlaybookName": {
+            "defaultValue": "CW-Manage-Integration",
+            "type": "String"
+        },
+        "UserName": {
+            "defaultValue": "<username>@<domain>",
+            "type": "string"
+        },
+        "AzureSentinelLogAnalyticsWorkspaceName": {
+        "defaultValue": "yourAzureSentinelworkspacename",
+        "type": "string"
+        },
+        "AzureSentinelLogAnalyticsWorkspaceResourceGroupName": {
+        "defaultValue": "yourAzureSentinelworkspaceRGname",
+        "type": "string"
+        },
+        "EventsNumber": {
+            "defaultValue": 10,
+            "type": "int"
+        },
+        "APIURI": {
+            "defaultValue": "yourAPIURI",
+            "type": "String"
+        },
+        "APIUserName": {
+            "defaultValue": "yourAPIUserName",
+            "type": "String"
+        },
+        "APIPrivateKey": {
+            "defaultValue": "yourAPIPrivateKey",
+            "type": "String"
+        },
+        "APIClientID": {
+            "defaultValue": "yourAPIClientID",
+            "type": "String"
+        },
+        "CompanyID": {
+            "defaultValue": 0,
+            "type": "Int"
+        }
+    },
+    "variables": {
+        "azuremonitorlogs": "[concat('azuremonitorlogs-', parameters('PlaybookName'))]",
+        "azuresentinel": "[concat('azuresentinel-', parameters('PlaybookName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('azuresentinel')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                           "displayName": "[parameters('UserName')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "[variables('azuremonitorlogs')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                           "displayName": "[parameters('UserName')]",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[parameters('PlaybookName')]",
+            "location": "[resourceGroup().location]",
+            "tags": {
+                "LogicAppsCategory": "security"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
+                "[resourceId('Microsoft.Web/connections', variables('azuremonitorlogs'))]"
+            ],
+            "properties": {
+                "state": "Disabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "APIURI": {
+                            "defaultValue": "[parameters('APIURI')]",
+                            "type": "String"
+                        }
+                    },
+                    "triggers": {
+                        "When_a_response_to_an_Azure_Sentinel_alert_is_triggered": {
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "callback_url": "@{listCallbackUrl()}"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "path": "/subscribe"
+                            }
+                        }
+                    },
+                    "actions": {
+                        "Alert_-_Get_incident": {
+                            "runAfter": {},
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuresentinel']['connectionId']"
+                                    }
+                                },
+                                "method": "get",
+                                "path": "/Cases/@{encodeURIComponent(triggerBody()?['SystemAlertId'])}/@{encodeURIComponent(triggerBody()?['WorkspaceSubscriptionId'])}/@{encodeURIComponent(triggerBody()?['WorkspaceId'])}/@{encodeURIComponent(triggerBody()?['WorkspaceResourceGroup'])}"
+                            }
+                        },
+                        "Check_for_existing,_new_or_in_progress_ticket": {
+                            "runAfter": {
+                                "For_each_3": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "authentication": {
+                                    "password": "[parameters('APIPrivateKey')]",
+                                    "type": "Basic",
+                                    "username": "[parameters('APIUserName')]"
+                                },
+                                "headers": {
+                                    "Accept": "*/*",
+                                    "Accept-Encoding": "gzip,deflate,br",
+                                    "ClientID": "[parameters('APIClientID')]",
+                                    "Content-Type": "application/json"
+                                },
+                                "method": "GET",
+                                "uri": "@{parameters('APIURI')}?conditions=board/name=\"SIEM\"%20and%20summary=\"@{triggerBody()?['AlertDisplayName']}\"%20and%20status/name!=\">Completed\""
+                            }
+                        },
+                        "Does_ticket_exist": {
+                            "actions": {
+                                "For_each": {
+                                    "foreach": "@body('Parse_JSON_3')",
+                                    "actions": {
+                                        "Add_Note_to_ticket": {
+                                            "runAfter": {},
+                                            "type": "Http",
+                                            "inputs": {
+                                                "authentication": {
+                                                    "password": "[parameters('APIPrivateKey')]",
+                                                    "type": "Basic",
+                                                    "username": "[parameters('APIUserName')]"
+                                                },
+                                                "body": {
+                                                    "detailDescriptionFlag": true,
+                                                    "text": " @{variables('OutOutString')}\n\nLink:\n\nhttps://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident/@{body('Alert_-_Get_incident')?['id']}"
+                                                },
+                                                "headers": {
+                                                    "Accept": "*/*",
+                                                    "Accept-Encoding": "gzip,deflate,br",
+                                                    "ClientID": "[parameters('APIClientID')]",
+                                                    "Content-Type": "application/json"
+                                                },
+                                                "method": "POST",
+                                                "uri": "@{parameters('APIURI')}/@{items('For_each')['id']}/notes"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Parse_JSON_3": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Foreach"
+                                },
+                                "Parse_JSON_3": {
+                                    "runAfter": {},
+                                    "type": "ParseJson",
+                                    "inputs": {
+                                        "content": "@body('Check_for_existing,_new_or_in_progress_ticket')",
+                                        "schema": {
+                                            "items": {
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "id"
+                                                ],
+                                                "type": "object"
+                                            },
+                                            "type": "array"
+                                        }
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Check_for_existing,_new_or_in_progress_ticket": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "else": {
+                                "actions": {
+                                    "Create_ticket": {
+                                        "runAfter": {
+                                            "Is_alert_severity_high": [
+                                                "Succeeded"
+                                            ]
+                                        },
+                                        "type": "Http",
+                                        "inputs": {
+                                            "authentication": {
+                                                "password": "[parameters('APIPrivateKey')]",
+                                                "type": "Basic",
+                                                "username": "[parameters('APIUserName')]"
+                                            },
+                                            "body": {
+                                                "board": {
+                                                    "id": 32
+                                                },
+                                                "company": {
+                                                    "id": "[parameters('CompanyID')]"
+                                                },
+                                                "impact": "Medium",
+                                                "initialDescription": "@{triggerBody()?['Description']}\n\n@{variables('OutOutString')}\n\nLink: https://portal.azure.com/#asset/Microsoft_Azure_Security_Insights/Incident/@{body('Alert_-_Get_incident')?['id']}",
+                                                "item": {
+                                                    "name": "Alert"
+                                                },
+                                                "priority": {
+                                                    "id": "@variables('AZSeverity')"
+                                                },
+                                                "severity": "@triggerBody()?['Severity']",
+                                                "source": {
+                                                    "name": "Azure Sentinel"
+                                                },
+                                                "subType": {
+                                                    "name": "Sentinel"
+                                                },
+                                                "summary": "@triggerBody()?['AlertDisplayName']",
+                                                "type": {
+                                                    "name": "Azure"
+                                                }
+                                            },
+                                            "headers": {
+                                                "Accept": "*/*",
+                                                "Accept-Encoding": "gzip,deflate,br",
+                                                "ClientID": "[parameters('APIClientID')]",
+                                                "Content-Type": "application/json"
+                                            },
+                                            "method": "POST",
+                                            "uri": "@{parameters('APIURI')}"
+                                        }
+                                    },
+                                    "Is_alert_severity_high": {
+                                        "actions": {
+                                            "Set_ticket_priority_variable_to_high": {
+                                                "runAfter": {},
+                                                "type": "SetVariable",
+                                                "inputs": {
+                                                    "name": "AZSeverity",
+                                                    "value": 15
+                                                }
+                                            }
+                                        },
+                                        "runAfter": {},
+                                        "else": {
+                                            "actions": {
+                                                "Is_alert_severity_medium": {
+                                                    "actions": {
+                                                        "Set_ticket_priority_variable_to_medium": {
+                                                            "runAfter": {},
+                                                            "type": "SetVariable",
+                                                            "inputs": {
+                                                                "name": "AZSeverity",
+                                                                "value": 8
+                                                            }
+                                                        }
+                                                    },
+                                                    "runAfter": {},
+                                                    "else": {
+                                                        "actions": {
+                                                            "Set_ticket_priority_variable_to_low": {
+                                                                "runAfter": {},
+                                                                "type": "SetVariable",
+                                                                "inputs": {
+                                                                    "name": "AZSeverity",
+                                                                    "value": 7
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "equals": [
+                                                                    "@triggerBody()?['Severity']",
+                                                                    "Medium"
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "type": "If"
+                                                }
+                                            }
+                                        },
+                                        "expression": {
+                                            "and": [
+                                                {
+                                                    "equals": [
+                                                        "@triggerBody()?['Severity']",
+                                                        "High"
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        "type": "If"
+                                    }
+                                }
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "not": {
+                                            "equals": [
+                                                "@string(body('Check_for_existing,_new_or_in_progress_ticket'))",
+                                                "[[]"
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        },
+                        "For_each_3": {
+                            "foreach": "@body('Run_query_and_list_results')?['value']",
+                            "actions": {
+                                "Append_to_Description_String_variable": {
+                                    "runAfter": {
+                                        "Create_formatted_string": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "AppendToStringVariable",
+                                    "inputs": {
+                                        "name": "OutOutString",
+                                        "value": "@{outputs('Create_formatted_string')}\n\n"
+                                    }
+                                },
+                                "Create_formatted_string": {
+                                    "runAfter": {},
+                                    "type": "Compose",
+                                    "inputs": "@replace(replace(replace(replace(string(item()),'{',''),'}',''),',','\n'),'\"','')"
+                                }
+                            },
+                            "runAfter": {
+                                "Run_query_and_list_results": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Foreach"
+                        },
+                        "Initialize_Description_String_variable": {
+                            "runAfter": {
+                                "Initialize_Ticket_Priority_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "OutOutString",
+                                        "type": "string"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_Events_Number_variable": {
+                            "runAfter": {
+                                "Initialize_Description_String_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "EventsNumber",
+                                        "type": "integer",
+                                        "value": "[parameters('EventsNumber')]"
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_Ticket_Priority_variable": {
+                            "runAfter": {
+                                "Alert_-_Get_incident": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "AZSeverity",
+                                        "type": "integer"
+                                    }
+                                ]
+                            }
+                        },
+                        "Parse_JSON": {
+                            "runAfter": {
+                                "Initialize_Events_Number_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@triggerBody()?['ExtendedProperties']",
+                                "schema": {
+                                    "Query": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        },
+                        "Parse_JSON_2": {
+                            "runAfter": {
+                                "Parse_JSON": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@body('Parse_JSON')",
+                                "schema": {
+                                    "properties": {
+                                        "body": {
+                                            "properties": {
+                                                "Query": {
+                                                    "type": "string"
+                                                },
+                                                "Query End Time UTC": {
+                                                    "type": "string"
+                                                },
+                                                "Query Period": {
+                                                    "type": "string"
+                                                },
+                                                "Query Results Aggregation Kind": {
+                                                    "type": "string"
+                                                },
+                                                "Query Start Time UTC": {
+                                                    "type": "string"
+                                                },
+                                                "Search Query Results Overall Count": {
+                                                    "type": "string"
+                                                },
+                                                "Trigger Operator": {
+                                                    "type": "string"
+                                                },
+                                                "Trigger Threshold": {
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "Run_query_and_list_results": {
+                            "runAfter": {
+                                "Parse_JSON_2": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "set query_datetimescope_column = \"TimeGenerated\";\nset query_datetimescope_from = datetime(@{body('Parse_JSON_2')?['Query Start Time UTC']});\nset query_datetimescope_to = datetime(@{body('Parse_JSON_2')?['Query End Time UTC']});\n@{body('Parse_JSON_2')?['Query']} | top @{variables('EventsNumber')} by timestamp desc ",
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azuremonitorlogs']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/queryData",
+                                "queries": {
+                                    "resourcegroups": "[parameters('AzureSentinelLogAnalyticsWorkspaceResourceGroupName')]",
+                                    "resourcename": "[parameters('AzureSentinelLogAnalyticsWorkspaceName')]",
+                                    "resourcetype": "Log Analytics Workspace",
+                                    "subscriptions": "[subscription().subscriptionId]",
+                                    "timerange": "@{body('Parse_JSON_2')?['Query Period']}"
+                                }
+                            }
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azuremonitorlogs": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuremonitorlogs'))]",
+                                "connectionName": "[variables('azuremonitorlogs')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuremonitorlogs')]"
+                            },
+                            "azuresentinel": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', variables('azuresentinel'))]",
+                                "connectionName": "[variables('azuresentinel')]",
+                                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/azuresentinel')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
